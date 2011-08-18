@@ -1,10 +1,11 @@
 '! A script for auditing permissions of files and folders.
 '!
 '! @author  Ansgar Wiechers <ansgar.wiechers@planetcobalt.net>
-'! @date    2011-08-16
-'! @version 0.9
+'! @date    2011-08-18
+'! @version 0.9.1
 
 '! @todo add handling of SACLs
+'! @todo keine Baumdarstellung, wenn recurse = False
 
 Option Explicit
 
@@ -71,7 +72,7 @@ Private Const READ_WRITE         = &h0012019f
 Private Const READ_ONLY          = &h00120089
 Private Const WRITE_ONLY         = &h00100116
 
-' maximum length of a string displaying aceFlags
+'! The maximum length of a string displaying aceFlags.
 Private Const MAXLEN_ACEFLAGS_STR = 16
 
 Private accessMask : Set accessMask = CreateObject("Scripting.Dictionary")
@@ -114,7 +115,22 @@ Private simplePermissions : Set simplePermissions = CreateObject("Scripting.Dict
 	simplePermissions.Add WRITE_ONLY        , "W  "
 
 ' global configuration flags
-Private showOwner, showInheritedPermissions, showSimplePermissions, showFiles, recurse
+Private showOwner                 '! Display the owner of each object in the
+                                  '! output. Global configuration flag.
+Private showInheritedPermissions  '! Display inherited permissions in the
+                                  '! output. Otherwise only non-inherited
+                                  '! permissions will be displayed. Global
+                                  '! configuration flag.
+Private showSimplePermissions     '! Display simple permissions instead of
+                                  '! full permissions in the output. Global
+                                  '! configuration flag.
+Private showFiles                 '! Display files in the output. Otherwise
+                                  '! only folders will be displayed in the
+                                  '! output. Global configuration flag.
+Private recurse                   '! Recurse into subdirectories. Otherwise
+                                  '! only the given object(s) (files or
+                                  '! folders) will be displayed. Global
+                                  '! configuration flag.
 
 Private fso : Set fso = CreateObject("Scripting.FileSystemObject")
 
@@ -145,10 +161,10 @@ Sub Main(args)
 		path = fso.GetAbsolutePathName(arg)
 		If fso.FileExists(path) Then
 			' arg is a file
-			PrintSecurityInformation fso.GetFile(path), "", ""
+			PrintSecurityInformation fso.GetFile(path), True, "", ""
 		ElseIf fso.FolderExists(path) Then
 			' arg is a folder
-			PrintSecurityInformation fso.GetFolder(path), "", ""
+			PrintSecurityInformation fso.GetFolder(path), True, "", ""
 		Else
 			' Print an error if arg doesn't exist and continue.
 			WScript.StdErr.WriteLine "File or folder '" & path & "' does not exist."
@@ -163,12 +179,16 @@ End Sub
 '! If the object is a folder and the flags recurse or showFiles are set to
 '! True, security information on the subfolders or files is printed as well.
 '!
-'! @param  obj          The folder or file for which security information
-'!                      should be printed.
-'! @param  parentPrefix Indention prefix for the information on the parent
-'!                      folder of the current file/folder.
-'! @param  myPrefix     Additional prefix for the current file/folder.
-Private Sub PrintSecurityInformation(obj, ByVal parentPrefix, ByVal myPrefix)
+'! @param  obj            The folder or file for which security information
+'!                        should be printed.
+'! @param  showInherited  Boolean value indicting whether or not inherited
+'!                        permissions should be displayed. Must be passed as a
+'!                        parameter, because inherited permissions of the root
+'!                        object should always be displayed.
+'! @param  parentPrefix   Indention prefix for the information on the parent
+'!                        folder of the current file/folder.
+'! @param  myPrefix       Additional prefix for the current file/folder.
+Private Sub PrintSecurityInformation(obj, ByVal showInherited, ByVal parentPrefix, ByVal myPrefix)
 	Dim record, sd, owner, group, ace
 	Dim indentString, i, sf, f
 
@@ -198,12 +218,12 @@ Private Sub PrintSecurityInformation(obj, ByVal parentPrefix, ByVal myPrefix)
 	' display DACLs
 	If IsSet(sd.ControlFlags, SE_DACL_PRESENT) Then
 		For Each ace In sd.DACL
-			If showInheritedPermissions Or Not IsInherited(ace) Then record = record _
+			If showInherited Or Not IsInherited(ace) Then record = record _
 				& vbNewLine & indentString & FormatACE(ace)
 		Next
 	End If
 
-	' Display SACLs
+	' display SACLs
 	'~ If IsSet(sd.ControlFlags, SE_SACL_PRESENT) Then
 		'~ For Each ace In sd.SACL
 			'~ ' do stuff
@@ -219,10 +239,16 @@ Private Sub PrintSecurityInformation(obj, ByVal parentPrefix, ByVal myPrefix)
 			i = 0
 			For Each sf In obj.SubFolders
 				i = i + 1
+				' When i = obj.SubFolders.Count and no files have to be displayed
+				' (either because none should be displayed or because there aren't
+				' any), the prefix for the next recursion level is "`-". Otherwise
+				' it's "+-" (i.e. there are more folders in this parent folder).
 				If i = obj.SubFolders.Count And (Not showFiles Or obj.Files.Count = 0) Then
-					PrintSecurityInformation sf, parentPrefix & myPrefix, "`-"
+					PrintSecurityInformation sf, showInheritedPermissions _
+						, parentPrefix & myPrefix, "`-"
 				Else
-					PrintSecurityInformation sf, parentPrefix & myPrefix, "+-"
+					PrintSecurityInformation sf, showInheritedPermissions _
+						, parentPrefix & myPrefix, "+-"
 				End If
 			Next
 		End If
@@ -231,6 +257,9 @@ Private Sub PrintSecurityInformation(obj, ByVal parentPrefix, ByVal myPrefix)
 			i = 0
 			For Each f In obj.Files
 				i = i + 1
+				' When i = obj.Files.Count (i.e. the last file in this parent folder
+				' is being processed), the prefix for the next recursion level is "`-".
+				' Otherwise it's "+-".
 				If i = obj.Files.Count Then
 					PrintSecurityInformation f, parentPrefix & myPrefix, "`-"
 				Else
@@ -270,7 +299,8 @@ Private Function GetSecurityDescriptor(ByVal path)
 End Function
 
 '! Return a formatted string representing the given ACE. An ACE is presented
-'! either in simple or in full form, depending on the showSimple paramenter.
+'! either in simple or in full form, depending on the global configuration
+'! flag "showSimplePermissions".
 '!
 '! - Simple: A RX  Trustee
 '! - Full:   D rwaxdc rw rw rwo [(OI)(CI)(IO)(NP)] Trustee
@@ -279,15 +309,15 @@ End Function
 '! always the name of the trustee (user, group or security principal) to whom
 '! the ACE applies.
 '!
-'! When showSimplePermissions is set to True, permissions can be either full
+'! If "showSimplePermissions" is set to True, permissions can be either full
 '! control (F), modify (M), read & write & execute (RWX), read & execute (RX),
 '! read & write (RW), read-only (R), write-only (W). All other permissions are
 '! displayed as "(S)" (special permissions).
 '!
-'! When showSimple is False, the second group shows the flags for read (r),
-'! write (w), append (a), execute (x), delete (d) and delete child (c)
-'! permissions. The next two groups specify read/write permissions for
-'! attributes and extended attributes respectively. The fourth group shows
+'! If "showSimplePermissions" is set to False, the second group shows the flags
+'! for read (r), write (w), append (a), execute (x), delete (d) and delete
+'! child (c) permissions. The next two groups specify read/write permissions
+'! for attributes and extended attributes respectively. The fourth group shows
 '! the rights to read permissions (r), write permissions (w) and take
 '! ownership (o), followed by a group with inheritance settings. This fifth
 '! group may be empty if permissions to the object are neither inherited nor
