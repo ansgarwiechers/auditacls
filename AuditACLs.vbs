@@ -441,7 +441,7 @@ End Function
 '! Print usage information and exit.
 Private Sub PrintUsage
 	WScript.Echo "Display security information of a given file, folder or directory tree." & vbNewLine & vbNewLine _
-		& "Usage:" & vbTab & WScript.ScriptName & " [/f] [/i] [/o] [/s] [/r] FILE/FOLDER [FILE/FOLDER ...]" & vbNewLine _
+		& "Usage:" & vbTab & WScript.ScriptName & " [/e] [/f] [/i] [/o] [/s] [/r] FILE/FOLDER [FILE/FOLDER ...]" & vbNewLine _
 		& vbTab & WScript.ScriptName & " /?" & vbNewLine & vbNewLine _
 		& vbTab & "/?" & vbTab & "Print this help and exit." & vbNewLine _
 		& vbTab & "/e" & vbTab & "Show extended permissions." & vbNewLine _
