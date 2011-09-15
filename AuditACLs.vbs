@@ -1,10 +1,11 @@
-'! A script for auditing permissions of files and folders.
+'! A script for auditing permissions, ownership and access monitoring settings
+'! of files and folders.
 '!
 '! @author  Ansgar Wiechers <ansgar.wiechers@planetcobalt.net>
-'! @date    2011-08-31
-'! @version 0.9.2
+'! @date    2011-09-15
+'! @version 1.0
 
-'! @todo add handling of SACLs
+'! @todo detection of Null DACLs: check IsNull(sd.DACL) instead of UBound(sd.DACL) = -1?
 
 Option Explicit
 
@@ -74,6 +75,13 @@ Private Const WRITE_ONLY         = &h00100116
 '! The maximum length of a string displaying aceFlags.
 Private Const MAXLEN_ACEFLAGS_STR = 16
 
+'! Wbem impersonation levels
+'! @see <http://msdn.microsoft.com/en-us/library/aa393618.aspx>
+Private Const WbemImpersonationLevelAnonymous   = 1
+Private Const WbemImpersonationLevelIdentify    = 2
+Private Const WbemImpersonationLevelImpersonate = 3
+Private Const WbemImpersonationLevelDelegate    = 4
+
 Private accessMask : Set accessMask = CreateObject("Scripting.Dictionary")
 	accessMask.Add 0                     , "-"
 	accessMask.Add FILE_READ_DATA        , "r"
@@ -97,12 +105,19 @@ Private aceFlags : Set aceFlags = CreateObject("Scripting.Dictionary")
 	aceFlags.Add CONTAINER_INHERIT_ACE   , "(CI)"
 	aceFlags.Add NO_PROPAGATE_INHERIT_ACE, "(NP)"
 	aceFlags.Add INHERIT_ONLY_ACE        , "(IO)"
-'	aceFlags.Add INHERITED_ACE           , "(I)"
 
+' Technically SUCCESSFUL_ACCESS_ACE_FLAG and FAILED_ACCESS_ACE_FLAG are not
+' ACE types, but ACE flags. However, since they're displayed similar to
+' ACCESS_ALLOWED and ACCESS_DENIED types in the GUI, SACLs are easier to
+' understand when the respective flags are displayed in the CLI in a similar
+' way as the DACL ACE types.
 Private aceType : Set aceType = CreateObject("Scripting.Dictionary")
 	aceType.Add ACCESS_ALLOWED, "A"
 	aceType.Add ACCESS_DENIED , "D"
 	aceType.Add AUDIT         , "I"
+	aceType.Add SUCCESSFUL_ACCESS_ACE_FLAG, "S"
+	aceType.Add FAILED_ACCESS_ACE_FLAG    , "F"
+
 
 Private simplePermissions : Set simplePermissions = CreateObject("Scripting.Dictionary")
 	simplePermissions.Add FULL_CONTROL      , "F  "
@@ -113,7 +128,7 @@ Private simplePermissions : Set simplePermissions = CreateObject("Scripting.Dict
 	simplePermissions.Add READ_ONLY         , "R  "
 	simplePermissions.Add WRITE_ONLY        , "W  "
 
-' global configuration flags
+' global script configuration flags
 Private showOwner                 '! Display the owner of each object in the
                                   '! output. Global configuration flag.
 Private showSID                   '! Display the SID of a trustee instead of
@@ -129,14 +144,15 @@ Private showExtendedPermissions   '! Display extended permissions instead of
                                   '! simple permissions in the output. Global
                                   '! configuration flag.
 Private showFiles                 '! Display files in the output. Otherwise
-                                  '! only folders will be displayed in the
-                                  '! output. Global configuration flag.
+                                  '! only folders will be displayed. Global
+                                  '! configuration flag.
 Private recurse                   '! Recurse into subdirectories. Otherwise
                                   '! only the given object(s) (files or
                                   '! folders) will be displayed. Global
                                   '! configuration flag.
 
 Private fso : Set fso = CreateObject("Scripting.FileSystemObject")
+Private wmiSvc
 
 Main WScript.Arguments
 
@@ -144,7 +160,7 @@ Main WScript.Arguments
 '!
 '! @param  args   The commandline arguments passed to the script.
 Sub Main(args)
-	Dim arg, path
+	Dim arg, path, locator
 
 	' check if script is run with cscript.exe, abort otherwise
 	If LCase(Right(WScript.FullName, 11)) <> "cscript.exe" Then
@@ -153,7 +169,7 @@ Sub Main(args)
 		WScript.Quit 1
 	End If
 
-	' evaluate commandline options
+	' evaluate commandline arguments
 	If args.Named.Exists("?") Then PrintUsage
 	showOwner = args.Named.Exists("o")
 	showSID = args.Named.Exists("s")
@@ -161,6 +177,30 @@ Sub Main(args)
 	showExtendedPermissions = args.Named.Exists("e")
 	showFiles = args.Named.Exists("f")
 	recurse = args.Named.Exists("r")
+
+	' get WMI service and adjust privileges so we can read SACLs
+	On Error Resume Next
+	Set locator = CreateObject("WbemScripting.SWbemLocator")
+	If Err.Number <> 0 Then
+		WScript.StdErr.WriteLine "Error creating SWbemLocator object: " _
+			& Err.Description & " (0x" & Hex(Err.Number) & ")"
+		WScript.Quit 1
+	End If
+	Set wmiSvc = locator.ConnectServer("", "root/cimv2")
+	If Err.Number <> 0 Then
+		WScript.StdErr.WriteLine "Error connecting to WMI service: " _
+			& Err.Description & " (0x" & Hex(Err.Number) & ")"
+		WScript.Quit 1
+	End If
+	wmiSvc.Security_.ImpersonationLevel = WbemImpersonationLevelImpersonate
+	wmiSvc.Security_.Privileges.AddAsString "SeSecurityPrivilege", True
+	If Err.Number <> 0 Then
+		WScript.StdErr.WriteLine "Error adjusting privileges: " _
+			& Err.Description & " (0x" & Hex(Err.Number) & ")"
+		WScript.Quit 1
+	End If
+	Set locator = Nothing
+	On Error Goto 0
 
 	For Each arg In args.Unnamed
 		path = fso.GetAbsolutePathName(arg)
@@ -224,18 +264,28 @@ Private Sub PrintSecurityInformation(obj, ByVal showInherited, ByVal parentPrefi
 	If showOwner Then record = record & vbTab & owner
 
 	' display DACLs
-	If IsSet(sd.ControlFlags, SE_DACL_PRESENT) And (showInherited Or HasNonInheritedACE(sd.DACL)) Then
-		For Each ace In sd.DACL
-			record = record & vbNewLine & indentString & FormatACE(ace)
-		Next
+	If IsSet(sd.ControlFlags, SE_DACL_PRESENT) _
+			And (showInherited Or HasNonInheritedACE(sd.DACL) _
+			Or Not IsSet(sd.ControlFlags, SE_DACL_AUTO_INHERITED)) Then
+		If UBound(sd.DACL) = -1 Then
+			' Null DACL found. This might be a security problem, because it will
+			' grant full access to everyone. See for instance:
+			' <http://blogs.technet.com/b/askds/archive/2009/06/02/what-occurs-when-the-security-group-policy-cse-encounters-a-null-dacl.aspx>
+			WScript.StdErr.WriteLine "Warning: Null DACL found on file '" & obj.Path & "'"
+			record = record & vbNewLine & indentString & "(Null)"
+		Else
+			For Each ace In sd.DACL
+				record = record & vbNewLine & indentString & FormatACE(ace)
+			Next
+		End If
 	End If
 
 	' display SACLs
-	'~ If IsSet(sd.ControlFlags, SE_SACL_PRESENT) Then
-		'~ For Each ace In sd.SACL
-			'~ ' do stuff
-		'~ Next
-	'~ End If
+	If IsSet(sd.ControlFlags, SE_SACL_PRESENT) And Not IsNull(sd.SACL) Then
+		For Each ace In sd.SACL
+			record = record & vbNewLine & indentString & FormatACE(ace) & " "
+		Next
+	End If
 
 	WScript.StdOut.WriteLine record
 
@@ -295,13 +345,13 @@ Private Function GetSecurityDescriptor(ByVal path)
 	path = fso.GetAbsolutePathName(path)
 	If fso.FileExists(path) Or fso.FolderExists(path) Then
 		On Error Resume Next
-		Set wmiFileSecSetting = GetObject("winmgmts:Win32_LogicalFileSecuritySetting.path='" _
+		Set wmiFileSecSetting = wmiSvc.Get("Win32_LogicalFileSecuritySetting.Path='" _
 			& Replace(path, "\", "\\") & "'")
 		wmiFileSecSetting.GetSecurityDescriptor wmiSD
 		If Err.Number = 0 Then
 			Set GetSecurityDescriptor = wmiSD
 		Else
-			WScript.StdErr.WriteLine Err.Description & " (" & Hex(Err.Number) & ")"
+			WScript.StdErr.WriteLine "GetSecurityDescriptor: " & Err.Description & " (" & Hex(Err.Number) & ")"
 		End If
 		On Error Goto 0
 	End If
@@ -314,10 +364,15 @@ End Function
 '! - Simple:  A RX  Trustee
 '! - Full:   +D rwaxdc rw rw rwo (OI)(CI)(IO)     Trustee
 '!
-'! First comes always the ACE type (A = Allow, D = Deny, I = Audit). Last is
-'! always the name or SID of the trustee (user, group or security principal) to
-'! whom the ACE applies. A leading plus sign indicates that the ACE was not
-'! inherited from a parent object.
+'! First comes always the ACE type (A = Allow, D = Deny, S = Success,
+'! F = Failure). Last is always the name or SID of the trustee (user, group or
+'! security principal) to whom the ACE applies. A leading plus sign indicates
+'! that the ACE was not inherited from a parent object.
+'!
+'! Note: Technically "Success" and "Failure" are not ACE types, but ACE flags.
+'! However, since they're displayed similar to "Allow" and "Deny" type in the
+'! GUI, I thought that SACLs would be easier to read if those flags were
+'! displayed in the CLI in a similar way as the DACL ACE types.
 '!
 '! If "showExtendedPermissions" is set to False, permissions can be either full
 '! control (F), modify (M), read & write & execute (RWX), read & execute (RX),
@@ -335,7 +390,7 @@ End Function
 '! @param  ace  The ACE.
 '! @return A string representation of the given ACE.
 Private Function FormatACE(ByVal ace)
-	Dim inheritance
+	Dim inheritance, mask
 
 	If IsInherited(ace) Then
 		FormatACE = " "
@@ -343,7 +398,12 @@ Private Function FormatACE(ByVal ace)
 		FormatACE = "+"
 	End If
 
-	FormatACE = FormatACE & aceType(ace.AceType) & " "
+	If aceType(ace.AceType) = "I" Then
+		FormatACE = FormatACE & aceType(ace.AceFlags And _
+			(SUCCESSFUL_ACCESS_ACE_FLAG Or FAILED_ACCESS_ACE_FLAG)) & " "
+	Else
+		FormatACE = FormatACE & aceType(ace.AceType) & " "
+	End If
 
 	If showExtendedPermissions Then
 		' Display full permissions and inheritance settings.
@@ -370,8 +430,12 @@ Private Function FormatACE(ByVal ace)
 	Else
 		' When displaying simple permissions, all access masks that aren't exact
 		' matches will be displayed as "(S)" (special permissions).
-		If simplePermissions.Exists(ace.AccessMask) Then
-			FormatACE = FormatACE & simplePermissions(ace.AccessMask)
+		mask = ace.AccessMask
+		' Add SYNCHRONIZE flag to ACEs from SACLs. That way all ACEs can be treated
+		' the same way.
+		If aceType(ace.AceType) = "I" Then mask = mask Or SYNCHRONIZE
+		If simplePermissions.Exists(mask) Then
+			FormatACE = FormatACE & simplePermissions(mask)
 		Else
 			FormatACE = FormatACE & "(S)"
 		End If
@@ -444,7 +508,7 @@ Private Sub PrintUsage
 		& "Usage:" & vbTab & WScript.ScriptName & " [/e] [/f] [/i] [/o] [/s] [/r] FILE/FOLDER [FILE/FOLDER ...]" & vbNewLine _
 		& vbTab & WScript.ScriptName & " /?" & vbNewLine & vbNewLine _
 		& vbTab & "/?" & vbTab & "Print this help and exit." & vbNewLine _
-		& vbTab & "/e" & vbTab & "Show extended permissions." & vbNewLine _
+		& vbTab & "/e" & vbTab & "Show extended permissions (default is simple permissions)." & vbNewLine _
 		& vbTab & "/f" & vbTab & "Show security information of files as well (not only folders)." & vbNewLine _
 		& vbTab & "/i" & vbTab & "Show inherited permissions." & vbNewLine _
 		& vbTab & "/o" & vbTab & "Show owner." & vbNewLine _
