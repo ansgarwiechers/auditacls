@@ -262,16 +262,14 @@ Private Sub PrintSecurityInformation(obj, ByVal showInherited, ByVal parentPrefi
 	If showOwner Then record = record & vbTab & owner
 
 	' display DACLs
-	If IsSet(sd.ControlFlags, SE_DACL_PRESENT) _
-			And (showInherited Or HasNonInheritedACE(sd.DACL) _
-			Or Not IsSet(sd.ControlFlags, SE_DACL_AUTO_INHERITED)) Then
+	If IsSet(sd.ControlFlags, SE_DACL_PRESENT) Then
 		If IsNull(sd.DACL) Then
 			' Null DACL found. This might be a security problem, because it will
 			' grant full access to everyone. See for instance:
 			' <http://blogs.technet.com/b/askds/archive/2009/06/02/what-occurs-when-the-security-group-policy-cse-encounters-a-null-dacl.aspx>
-			WScript.StdErr.WriteLine "Warning: Null DACL found on file '" & obj.Path & "'"
+			WScript.StdErr.WriteLine "Warning: Null DACL found on file/folder '" & obj.Path & "'"
 			record = record & vbNewLine & indentString & "(Null)"
-		Else
+		ElseIf showInherited Or HasNonInheritedACE(sd.DACL) Or Not IsSet(sd.ControlFlags, SE_DACL_AUTO_INHERITED) Then
 			For Each ace In sd.DACL
 				record = record & vbNewLine & indentString & FormatACE(ace)
 			Next
@@ -452,7 +450,9 @@ End Function
 '!
 '! @see <http://msdn.microsoft.com/en-us/library/aa394501.aspx>
 Private Function FormatTrustee(ByVal trustee)
-	If showSID Or IsNull(trustee.Name) Then
+	If IsNull(trustee) Then
+		FormatTrustee = ""
+	ElseIf showSID Or IsNull(trustee.Name) Then
 		FormatTrustee = trustee.SIDString
 	Else
 		If InStr(trustee.Domain, ".") > 0 Then
