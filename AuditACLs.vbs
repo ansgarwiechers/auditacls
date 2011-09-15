@@ -168,6 +168,7 @@ Sub Main(args)
 	End If
 
 	' evaluate commandline arguments
+	If args.Count = 0 Then PrintUsage
 	If args.Named.Exists("?") Then PrintUsage
 	showOwner = args.Named.Exists("o")
 	showSID = args.Named.Exists("s")
