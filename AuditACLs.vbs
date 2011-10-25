@@ -2,13 +2,15 @@
 '! of files and folders.
 '!
 '! @author  Ansgar Wiechers <ansgar.wiechers@planetcobalt.net>
-'! @date    2011-09-15
-'! @version 1.0
+'! @date    2011-10-25
+'! @version 1.1
+
+'! @todo work around path length limitation to 256 characters (<http://msdn.microsoft.com/en-us/library/aa365247.aspx#maxpath>? subst?)
 
 Option Explicit
 
-' ControlFlags
-' see <http://msdn.microsoft.com/en-us/library/aa394402.aspx>
+'! ControlFlags
+'! @see <http://msdn.microsoft.com/en-us/library/aa394402.aspx>
 Private Const SE_OWNER_DEFAULTED         = &h0001
 Private Const SE_GROUP_DEFAULTED         = &h0002
 Private Const SE_DACL_PRESENT            = &h0004
@@ -23,8 +25,8 @@ Private Const SE_DACL_PROTECTED          = &h1000
 Private Const SE_SACL_PROTECTED          = &h2000
 Private Const SE_SELF_RELATIVE           = &h8000
 
-' AccessMask flags
-' see <http://msdn.microsoft.com/en-us/library/aa394063.aspx>
+'! AccessMask flags
+'! @see <http://msdn.microsoft.com/en-us/library/aa394063.aspx>
 Private Const FILE_READ_DATA             = &h000001
 Private Const FILE_LIST_DIRECTORY        = &h000001
 Private Const FILE_WRITE_DATA            = &h000002
@@ -44,8 +46,8 @@ Private Const WRITE_DAC                  = &h040000
 Private Const WRITE_OWNER                = &h080000
 Private Const SYNCHRONIZE                = &h100000
 
-' AceFlags
-' see <http://msdn.microsoft.com/en-us/library/aa394063.aspx>
+'! AceFlags
+'! @see <http://msdn.microsoft.com/en-us/library/aa394063.aspx>
 Private Const OBJECT_INHERIT_ACE         = &h01
 Private Const CONTAINER_INHERIT_ACE      = &h02
 Private Const NO_PROPAGATE_INHERIT_ACE   = &h04
@@ -54,14 +56,14 @@ Private Const INHERITED_ACE              = &h10
 Private Const SUCCESSFUL_ACCESS_ACE_FLAG = &h40
 Private Const FAILED_ACCESS_ACE_FLAG     = &h80
 
-' AceType
-' see <http://msdn.microsoft.com/en-us/library/aa394063.aspx>
+'! AceType
+'! @see <http://msdn.microsoft.com/en-us/library/aa394063.aspx>
 Private Const ACCESS_ALLOWED = 0
 Private Const ACCESS_DENIED  = 1
 Private Const AUDIT          = 2
 
-' simple permissions (for simplicity reasons defined as literal values, not as
-' combinations of AccessMask flags)
+'! simple permissions (for simplicity reasons defined as literal values, not as
+'! combinations of AccessMask flags)
 Private Const FULL_CONTROL       = &h001f01ff
 Private Const MODIFY             = &h001301bf
 Private Const READ_WRITE_EXECUTE = &h001201bf
@@ -72,6 +74,13 @@ Private Const WRITE_ONLY         = &h00100116
 
 '! The maximum length of a string displaying aceFlags.
 Private Const MAXLEN_ACEFLAGS_STR = 16
+
+'! Maximum path length (minus 1 to account for the terminating null character).
+'! @see <http://msdn.microsoft.com/en-us/library/aa365247.aspx#maxpath>
+Private Const MAX_PATH = 259
+
+'! @see <http://msdn.microsoft.com/en-us/library/aa264532.aspx>
+Private Const PATH_NOT_FOUND = 76
 
 '! Wbem impersonation levels
 '! @see <http://msdn.microsoft.com/en-us/library/aa393618.aspx>
@@ -116,7 +125,6 @@ Private aceType : Set aceType = CreateObject("Scripting.Dictionary")
 	aceType.Add SUCCESSFUL_ACCESS_ACE_FLAG, "S"
 	aceType.Add FAILED_ACCESS_ACE_FLAG    , "F"
 
-
 Private simplePermissions : Set simplePermissions = CreateObject("Scripting.Dictionary")
 	simplePermissions.Add FULL_CONTROL      , "F  "
 	simplePermissions.Add MODIFY            , "M  "
@@ -125,6 +133,15 @@ Private simplePermissions : Set simplePermissions = CreateObject("Scripting.Dict
 	simplePermissions.Add READ_WRITE        , "RW "
 	simplePermissions.Add READ_ONLY         , "R  "
 	simplePermissions.Add WRITE_ONLY        , "W  "
+
+' Return codes of the GetSecurityDescriptor() method
+' see <http://msdn.microsoft.com/en-us/library/aa390773.aspx>
+Private rcDescription : Set rcDescription = CreateObject("Scripting.Dictionary")
+	rcDescription.Add 0, "Success"
+	rcDescription.Add 2, "Access Denied"
+	rcDescription.Add 8, "Unknown Failure"
+	rcDescription.Add 9, "Privilege Missing"
+	rcDescription.Add 21, "Invalid Parameter"
 
 ' global script configuration flags
 Private showOwner                 '! Display the owner of each object in the
@@ -150,6 +167,7 @@ Private recurse                   '! Recurse into subdirectories. Otherwise
                                   '! configuration flag.
 
 Private fso : Set fso = CreateObject("Scripting.FileSystemObject")
+Private sh  : Set sh  = CreateObject("WScript.Shell")
 Private wmiSvc
 
 Main WScript.Arguments
@@ -213,7 +231,7 @@ Sub Main(args)
 			WScript.StdOut.WriteLine
 		Else
 			' Print an error if arg doesn't exist and continue.
-			WScript.StdErr.WriteLine "File or folder '" & path & "' does not exist."
+			WScript.StdErr.WriteLine "File or folder """ & path & """ does not exist."
 		End If
 	Next
 End Sub
@@ -237,58 +255,87 @@ End Sub
 '! @param  myPrefix       Additional prefix for the current file/folder.
 Private Sub PrintSecurityInformation(obj, ByVal showInherited, ByVal parentPrefix, ByVal myPrefix)
 	Dim record, sd, owner, group, ace
-	Dim indentString, i, sf, f
+	Dim indentString, i, sf, f, skipFolder
+	Dim numFiles, numFolders, newDrive
 
+	skipFolder = False
 	record = parentPrefix & myPrefix & obj.Name
 
 	' Adjust the indention string according to whether the current object has
 	' subfolders or has files that should be displayed.
 	If myPrefix = "+-" Then myPrefix = "| "  ' "connect" subsequent object unless
-	If myPrefix = "`-" Then myPrefix = "  "  ' it's the last object (which has no successor)
+	If myPrefix = "`-" Then myPrefix = "  "  ' it's the last object (does not have
+	                                         ' a successor)
 	indentString = parentPrefix & myPrefix & "    "
 
 	If TypeName(obj) = "Folder" Then
+		' If the full path of a file or subfolder in the current folder (obj) is
+		' longer than MAX_PATH, counting them will fail with error 76 (Path not
+		' found).
+		On Error Resume Next
+		numFiles   = obj.Files.Count
+		numFolders = obj.SubFolders.Count
+		If Err.Number = PATH_NOT_FOUND Then
+			newDrive = Subst(obj.Path)
+			If IsNull(newDrive) Then Fail "Critical error. Terminating."
+			WScript.StdErr.WriteLine "Warning: path might exceed " & MAX_PATH _
+				& " characters. Substituting """ & obj.Path & """ with " & newDrive & "\."
+			Err.Clear
+			Set obj = fso.GetFolder(newDrive)
+			If Err.Number <> 0 Then Fail "Unexpected error: " & Err.Description _
+				& " (0x" & Hex(Err.Number) & "). Terminating."
+			numFiles   = obj.Files.Count
+			numFolders = obj.SubFolders.Count
+		End If
+		On Error Goto 0
+
 		record = record & "\" ' append a "\" to folder names
 		' "connect" subsequent objects through the ACEs for the current object
-		If recurse And ((showFiles And obj.Files.Count > 0) Or obj.SubFolders.Count > 0) Then
+		If recurse And ((showFiles And numFiles > 0) Or numFolders > 0) Then
 			indentString = parentPrefix & myPrefix & "|   "
 		End If
 	End If
 
-	Set sd = GetSecurityDescriptor(obj.Path)
+	Set sd = GetSecurityDescriptor(obj)
 
-	' display owner information
-	owner = FormatTrustee(sd.Owner)
-	If Not IsNull(sd.Group) Then owner = owner & " (" & FormatTrustee(sd.Group) & ")"
-	If showOwner Then record = record & vbTab & owner
+	If Not sd Is Nothing Then
+		' display owner information
+		owner = FormatTrustee(sd.Owner)
+		If Not IsNull(sd.Group) Then owner = owner & " (" & FormatTrustee(sd.Group) & ")"
+		If showOwner Then record = record & vbTab & owner
 
-	' display DACLs
-	If IsSet(sd.ControlFlags, SE_DACL_PRESENT) Then
-		If IsNull(sd.DACL) Then
-			' Null DACL found. This might be a security problem, because it will
-			' grant full access to everyone. See for instance:
-			' <http://blogs.technet.com/b/askds/archive/2009/06/02/what-occurs-when-the-security-group-policy-cse-encounters-a-null-dacl.aspx>
-			WScript.StdErr.WriteLine "Warning: Null DACL found on file/folder '" & obj.Path & "'"
-			record = record & vbNewLine & indentString & "(Null)"
-		ElseIf showInherited Or HasNonInheritedACE(sd.DACL) Or Not IsSet(sd.ControlFlags, SE_DACL_AUTO_INHERITED) Then
-			For Each ace In sd.DACL
-				record = record & vbNewLine & indentString & FormatACE(ace)
+		' display DACLs
+		If IsSet(sd.ControlFlags, SE_DACL_PRESENT) Then
+			If IsNull(sd.DACL) Then
+				' Null DACL found. This might be a security problem, because it will
+				' grant full access to everyone. See for instance:
+				' <http://blogs.technet.com/b/askds/archive/2009/06/02/what-occurs-when-the-security-group-policy-cse-encounters-a-null-dacl.aspx>
+				WScript.StdErr.WriteLine "Warning: Null DACL found on file/folder """ & obj.Path & """!"
+				record = record & vbNewLine & indentString & "(Null)"
+			ElseIf showInherited Or HasNonInheritedACE(sd.DACL) Or Not _
+					IsSet(sd.ControlFlags, SE_DACL_AUTO_INHERITED) Then
+				For Each ace In sd.DACL
+					record = record & vbNewLine & indentString & FormatACE(ace)
+				Next
+			End If
+		End If
+
+		' display SACLs
+		If IsSet(sd.ControlFlags, SE_SACL_PRESENT) And Not IsNull(sd.SACL) Then
+			For Each ace In sd.SACL
+				record = record & vbNewLine & indentString & FormatACE(ace) & " "
 			Next
 		End If
-	End If
 
-	' display SACLs
-	If IsSet(sd.ControlFlags, SE_SACL_PRESENT) And Not IsNull(sd.SACL) Then
-		For Each ace In sd.SACL
-			record = record & vbNewLine & indentString & FormatACE(ace) & " "
-		Next
+		WScript.StdOut.WriteLine record
+	Else
+		WScript.StdErr.WriteLine "Unable to retrieve security descriptor for """ & obj.Path & """."
+		skipFolder = True
 	End If
-
-	WScript.StdOut.WriteLine record
 
 	' If the given object is a folder and recurse is True or showFiles is True,
 	' print security information of the contained folders or files respectively.
-	If TypeName(obj) = "Folder" Then
+	If TypeName(obj) = "Folder" And Not skipFolder Then
 		If recurse Then
 			i = 0
 			For Each sf In obj.SubFolders
@@ -297,7 +344,7 @@ Private Sub PrintSecurityInformation(obj, ByVal showInherited, ByVal parentPrefi
 				' (either because none should be displayed or because there aren't
 				' any), the prefix for the next recursion level is "`-". Otherwise
 				' it's "+-" (i.e. there are more folders in this parent folder).
-				If i = obj.SubFolders.Count And (Not showFiles Or obj.Files.Count = 0) Then
+				If i = numFolders And (Not showFiles Or numFiles = 0) Then
 					PrintSecurityInformation sf, showInheritedPermissions _
 						, parentPrefix & myPrefix, "`-"
 				Else
@@ -314,7 +361,7 @@ Private Sub PrintSecurityInformation(obj, ByVal showInherited, ByVal parentPrefi
 				' When i = obj.Files.Count (i.e. the last file in this parent folder
 				' is being processed), the prefix for the next recursion level is "`-".
 				' Otherwise it's "+-".
-				If i = obj.Files.Count Then
+				If i = numFiles Then
 					PrintSecurityInformation f, showInheritedPermissions _
 						, parentPrefix & myPrefix, "`-"
 				Else
@@ -324,34 +371,46 @@ Private Sub PrintSecurityInformation(obj, ByVal showInherited, ByVal parentPrefi
 			Next
 		End If
 	End If
+
+	If Not IsEmpty(newDrive) Then UnSubst(newDrive)
 End Sub
 
-'! Get the security descriptor of the given file or folder. The function does
-'! NOT check whether the object exists, so the caller MUST ensure this.
+'! Get the security descriptor of the given file or folder.
 '!
-'! @param  path   A relative or absolute path to a file or folder.
+'! @param  obj  A file or folder object.
 '! @return The security descriptor object of the file/folder.
 '!
 '! @see <http://msdn.microsoft.com/en-us/library/aa390773.aspx> (GetSecurityDescriptor Method of the Win32_LogicalFileSecuritySetting Class)
 '! @see <http://msdn.microsoft.com/en-us/library/aa394577.aspx> (WMI Security Descriptor Objects)
-Private Function GetSecurityDescriptor(ByVal path)
-	Dim wmiFileSecSetting, wmiSD
+Private Function GetSecurityDescriptor(obj)
+	Dim path, wmiFileSecSetting, sd, rc
 
 	Set GetSecurityDescriptor = Nothing
 
-	path = fso.GetAbsolutePathName(path)
-	If fso.FileExists(path) Or fso.FolderExists(path) Then
-		On Error Resume Next
-		Set wmiFileSecSetting = wmiSvc.Get("Win32_LogicalFileSecuritySetting.Path='" _
-			& Replace(path, "\", "\\") & "'")
-		wmiFileSecSetting.GetSecurityDescriptor wmiSD
+	path = obj.Path
+	If Not (fso.FileExists(path) Or fso.FolderExists(path)) Then Exit Function
+
+	On Error Resume Next
+	Set wmiFileSecSetting = wmiSvc.Get("Win32_LogicalFileSecuritySetting.Path=""" _
+		& qq(path) & """")
+	If Err.Number <> 0 Then
+		WScript.StdErr.WriteLine "Error getting security settings for """ _
+			& obj.Path & """: " & Err.Description & " (0x" & Hex(Err.Number) & ")"
+	Else
+		rc = wmiFileSecSetting.GetSecurityDescriptor(sd)
 		If Err.Number = 0 Then
-			Set GetSecurityDescriptor = wmiSD
+			If rc = 0 Then
+				Set GetSecurityDescriptor = sd
+			Else
+				WScript.StdErr.WriteLine "GetSecurityDescriptor() returned code " _
+					& rc & " (" & rcDescription(rc) & ")."
+			End If
 		Else
-			WScript.StdErr.WriteLine "GetSecurityDescriptor: " & Err.Description & " (" & Hex(Err.Number) & ")"
+			WScript.StdErr.WriteLine "Error getting security descriptor: " _
+				& Err.Description & " (0x" & Hex(Err.Number) & ")"
 		End If
-		On Error Goto 0
 	End If
+	On Error Goto 0
 End Function
 
 '! Return a formatted string representing the given ACE. An ACE is presented
@@ -501,10 +560,72 @@ Private Function HasNonInheritedACE(acl)
 	HasNonInheritedACE = False
 End Function
 
+'! Substitute a given folder with a drive letter.
+'!
+'! @param  folder   The path to the folder.
+'! @return Drive-substitution of the folder or Null if the substitution failed.
+'!
+'! @see UnSubst()
+Private Function Subst(folder)
+	Dim i, drive, rc
+
+	Subst = Null
+
+	' Get an unused drive letter from the range C..Z.
+	For i = 67 To 90
+		If Not fso.DriveExists(Chr(i)) Then
+			drive = Chr(i) & ":"
+			Exit For
+		End If
+	Next
+	If IsEmpty(drive) Then
+		WScript.StdErr.WriteLine "Cannot subst """ & folder _
+			& """ to a drive letter. No unused drive letters found."
+		Exit Function
+	End If
+
+	rc = sh.Run("%COMSPEC% /c subst " & drive & " """ & folder & """", 0, True)
+	If rc = 0 Then
+		Subst = drive
+	Else
+		WScript.StdErr.WriteLine "External command 'subst' returned error code " _
+			& rc & "."
+	End If
+End Function
+
+'! Delete the subst-mapping to the given drive letter.
+'!
+'! @param  The drive to un-substitute.
+'!
+'! @see Subst()
+Private Sub UnSubst(drive)
+	Dim rc
+
+	rc = sh.Run("%COMSPEC% /c subst " & drive & " /d", 0, True)
+	If rc <> 0 Then WScript.StdErr.WriteLine _
+		"External command 'subst /d' returned error code " & rc & "."
+End Sub
+
+'! Escape characters in the given string for WMI queries.
+'!
+'! @param  str  The string to escape.
+'! @return The escaped string.
+Private Function qq(ByVal str)
+	qq = Replace(str, "\", "\\")
+End Function
+
+'! Print an error message to STDERR and quit.
+'!
+'! @param  msg  The message to print.
+Private Sub Fail(msg)
+	WScript.StdErr.WriteLine msg
+	WScript.Quit 1
+End Sub
+
 '! Print usage information and exit.
 Private Sub PrintUsage
 	WScript.Echo "Display security information of a given file, folder or directory tree." & vbNewLine & vbNewLine _
-		& "Usage:" & vbTab & WScript.ScriptName & " [/e] [/f] [/i] [/o] [/s] [/r] FILE/FOLDER [FILE/FOLDER ...]" & vbNewLine _
+		& "Usage:" & vbTab & WScript.ScriptName & " [/e] [/f] [/i] [/o] [/r] [/s] PATH [PATH ...]" & vbNewLine _
 		& vbTab & WScript.ScriptName & " /?" & vbNewLine & vbNewLine _
 		& vbTab & "/?" & vbTab & "Print this help and exit." & vbNewLine _
 		& vbTab & "/e" & vbTab & "Show extended permissions (default is simple permissions)." & vbNewLine _
@@ -512,6 +633,7 @@ Private Sub PrintUsage
 		& vbTab & "/i" & vbTab & "Show inherited permissions." & vbNewLine _
 		& vbTab & "/o" & vbTab & "Show owner." & vbNewLine _
 		& vbTab & "/r" & vbTab & "Recurse into subfolders." & vbNewLine _
-		& vbTab & "/s" & vbTab & "Show SIDs instead of names."
+		& vbTab & "/s" & vbTab & "Show SIDs instead of names." & vbNewLine & vbNewLine _
+		& vbTab & "PATH is the absolute or relative path to a file or folder."
 	WScript.Quit 0
 End Sub
