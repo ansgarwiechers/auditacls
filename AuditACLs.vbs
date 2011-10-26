@@ -2,10 +2,8 @@
 '! of files and folders.
 '!
 '! @author  Ansgar Wiechers <ansgar.wiechers@planetcobalt.net>
-'! @date    2011-10-25
+'! @date    2011-10-26
 '! @version 1.1
-
-'! @todo work around path length limitation to 256 characters (<http://msdn.microsoft.com/en-us/library/aa365247.aspx#maxpath>? subst?)
 
 Option Explicit
 
@@ -79,8 +77,9 @@ Private Const MAXLEN_ACEFLAGS_STR = 16
 '! @see <http://msdn.microsoft.com/en-us/library/aa365247.aspx#maxpath>
 Private Const MAX_PATH = 259
 
-'! @see <http://msdn.microsoft.com/en-us/library/aa264532.aspx>
-Private Const PATH_NOT_FOUND = 76
+'! error constants
+Private Const INVALID_PROCEDURE_CALL = 5  '! @see <http://msdn.microsoft.com/en-us/library/fsk1bk1y.aspx>
+Private Const PATH_NOT_FOUND         = 76 '! @see <http://msdn.microsoft.com/en-us/library/aa264532.aspx>
 
 '! Wbem impersonation levels
 '! @see <http://msdn.microsoft.com/en-us/library/aa393618.aspx>
@@ -171,6 +170,7 @@ Private sh  : Set sh  = CreateObject("WScript.Shell")
 Private wmiSvc
 
 Main WScript.Arguments
+
 
 '! Main procedure to handle commandline arguments and start the auditing.
 '!
@@ -327,9 +327,22 @@ Private Sub PrintSecurityInformation(obj, ByVal showInherited, ByVal parentPrefi
 			Next
 		End If
 
+		' printing the record might fail under some circumstances, e.g. when a
+		' filename contains certain Unicode characters
+		On Error Resume Next
 		WScript.StdOut.WriteLine record
+		If Err.Number = INVALID_PROCEDURE_CALL Then
+			WScript.StdErr.WriteLine "Cannot display permissions for file """ _
+				& Sanitize(obj.Path) & """. " & Err.Description & " (" & Err.Number _
+				& ")"
+		ElseIf Err.Number <> 0 Then
+			WScript.StdErr.WriteLine "Unexpected error: " & Err.Description _
+				& " (0x" & Hex(Err.Number) & ")"
+		End If
+		On Error Goto 0
 	Else
-		WScript.StdErr.WriteLine "Unable to retrieve security descriptor for """ & obj.Path & """."
+		WScript.StdErr.WriteLine "Unable to retrieve security descriptor for """ _
+			& obj.Path & """."
 		skipFolder = True
 	End If
 
@@ -621,6 +634,22 @@ Private Sub Fail(msg)
 	WScript.StdErr.WriteLine msg
 	WScript.Quit 1
 End Sub
+
+'! Sanitize a given string by replacing all but known-good characters with a
+'! replacement character ("?").
+'!
+'! @param  str  The string to sanitize.
+'! @return The sanitized string.
+Private Function Sanitize(str)
+	Dim re
+
+	Set re = New RegExp
+	re.Pattern    = "[^a-z0-9_\-.,;:!'+%&#~=∞^@$¢£•Ä©Æ\[\](){}µ‡·‚„‰ÂÁËÈÍÎÏÌÓÔÒÚÛÙıˆ˘˙˚¸ﬂ \\]"
+	re.Global     = True
+	re.IgnoreCase = True
+
+	Sanitize = re.Replace(str, "?")
+End Function
 
 '! Print usage information and exit.
 Private Sub PrintUsage

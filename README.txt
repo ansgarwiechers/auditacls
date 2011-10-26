@@ -29,7 +29,7 @@ See COPYING.txt.
 
 Usage
 -----
-AuditACLs.vbs [/e] [/f] [/i] [/o] [/s] [/r] FILE/FOLDER [FILE/FOLDER ...]
+AuditACLs.vbs [/e] [/f] [/i] [/o] [/r] [/s] PATH [PATH ...]
 AuditACLs.vbs /?
 
   /?      Print this help and exit.
@@ -39,6 +39,8 @@ AuditACLs.vbs /?
   /o      Show owner.
   /r      Recurse into subfolders.
   /s      Show SIDs instead of names.
+
+  PATH is the absolute or relative path to a file or folder.
 
 
 Output Format
