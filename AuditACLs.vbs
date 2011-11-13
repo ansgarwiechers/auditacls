@@ -2,8 +2,22 @@
 '! of files and folders.
 '!
 '! @author  Ansgar Wiechers <ansgar.wiechers@planetcobalt.net>
-'! @date    2011-10-26
+'! @date    2011-11-13
 '! @version 1.1
+
+' This program is free software; you can redistribute it and/or
+' modify it under the terms of the GNU General Public License
+' as published by the Free Software Foundation; either version 2
+' of the License, or (at your option) any later version.
+'
+' This program is distributed in the hope that it will be useful,
+' but WITHOUT ANY WARRANTY; without even the implied warranty of
+' MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+' GNU General Public License for more details.
+'
+' You should have received a copy of the GNU General Public License
+' along with this program; if not, write to the Free Software
+' Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 Option Explicit
 
@@ -79,6 +93,7 @@ Private Const MAX_PATH = 259
 
 '! error constants
 Private Const INVALID_PROCEDURE_CALL = 5  '! @see <http://msdn.microsoft.com/en-us/library/fsk1bk1y.aspx>
+Private Const PERMISSION_DENIED      = 70 '! @see <http://msdn.microsoft.com/en-us/library/aa264534.aspx>
 Private Const PATH_NOT_FOUND         = 76 '! @see <http://msdn.microsoft.com/en-us/library/aa264532.aspx>
 
 '! Wbem impersonation levels
@@ -272,6 +287,9 @@ Private Sub PrintSecurityInformation(obj, ByVal showInherited, ByVal parentPrefi
 		' If the full path of a file or subfolder in the current folder (obj) is
 		' longer than MAX_PATH, counting them will fail with error 76 (Path not
 		' found).
+		' At this point we'll also take care of error 70 (Access denied) when the
+		' user running the script does not have access to the contents of a folder
+		' (e.g. "System Volume Information").
 		On Error Resume Next
 		numFiles   = obj.Files.Count
 		numFolders = obj.SubFolders.Count
@@ -286,6 +304,13 @@ Private Sub PrintSecurityInformation(obj, ByVal showInherited, ByVal parentPrefi
 				& " (0x" & Hex(Err.Number) & "). Terminating."
 			numFiles   = obj.Files.Count
 			numFolders = obj.SubFolders.Count
+		ElseIf Err.Number = PERMISSION_DENIED Then
+			WScript.StdErr.WriteLine "Cannot enumerate subfolders of """ _
+				& obj.Path & """: " & Err.Description & " (" & Err.Number & ")"
+			skipFolder = True
+		Else
+			WScript.StdErr.WriteLine "Unexpected error: " & Err.Description _
+				& " (0x" & Hex(Err.Number) & ")"
 		End If
 		On Error Goto 0
 
