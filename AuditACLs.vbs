@@ -293,24 +293,26 @@ Private Sub PrintSecurityInformation(obj, ByVal showInherited, ByVal parentPrefi
 		On Error Resume Next
 		numFiles   = obj.Files.Count
 		numFolders = obj.SubFolders.Count
-		If Err.Number = PATH_NOT_FOUND Then
-			newDrive = Subst(obj.Path)
-			If IsNull(newDrive) Then Fail "Critical error. Terminating."
-			WScript.StdErr.WriteLine "Warning: path might exceed " & MAX_PATH _
-				& " characters. Substituting """ & obj.Path & """ with " & newDrive & "\."
-			Err.Clear
-			Set obj = fso.GetFolder(newDrive)
-			If Err.Number <> 0 Then Fail "Unexpected error: " & Err.Description _
-				& " (0x" & Hex(Err.Number) & "). Terminating."
-			numFiles   = obj.Files.Count
-			numFolders = obj.SubFolders.Count
-		ElseIf Err.Number = PERMISSION_DENIED Then
-			WScript.StdErr.WriteLine "Cannot enumerate subfolders of """ _
-				& obj.Path & """: " & Err.Description & " (" & Err.Number & ")"
-			skipFolder = True
-		Else
-			WScript.StdErr.WriteLine "Unexpected error: " & Err.Description _
-				& " (0x" & Hex(Err.Number) & ")"
+		If Err.Number <> 0 Then
+			If Err.Number = PATH_NOT_FOUND Then
+				newDrive = Subst(obj.Path)
+				If IsNull(newDrive) Then Fail "Critical error. Terminating."
+				WScript.StdErr.WriteLine "Warning: path might exceed " & MAX_PATH _
+					& " characters. Substituting """ & obj.Path & """ with " & newDrive & "\."
+				Err.Clear
+				Set obj = fso.GetFolder(newDrive)
+				If Err.Number <> 0 Then Fail "Unexpected error: " & Err.Description _
+					& " (0x" & Hex(Err.Number) & "). Terminating."
+				numFiles   = obj.Files.Count
+				numFolders = obj.SubFolders.Count
+			ElseIf Err.Number = PERMISSION_DENIED Then
+				WScript.StdErr.WriteLine "Cannot enumerate subfolders of """ _
+					& obj.Path & """: " & Err.Description & " (" & Err.Number & ")"
+				skipFolder = True
+			Else
+				WScript.StdErr.WriteLine "Unexpected error: " & Err.Description _
+					& " (0x" & Hex(Err.Number) & ")"
+			End If
 		End If
 		On Error Goto 0
 
