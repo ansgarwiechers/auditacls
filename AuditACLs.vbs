@@ -2,8 +2,8 @@
 '! of files and folders.
 '!
 '! @author  Ansgar Wiechers <ansgar.wiechers@planetcobalt.net>
-'! @date    2011-11-13
-'! @version 1.1
+'! @date    2012-05-06
+'! @version 1.1.1
 
 ' This program is free software; you can redistribute it and/or
 ' modify it under the terms of the GNU General Public License
