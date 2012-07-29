@@ -160,11 +160,13 @@ Private rcDescription : Set rcDescription = CreateObject("Scripting.Dictionary")
 ' global script configuration flags
 Private showOwner                 '! Display the owner of each object in the
                                   '! output. Global configuration flag.
-Private showSID                   '! Display the SID of a trustee instead of
+Private showSID                   '! Display the SID of a trustee along with
                                   '! its name. SIDs are always displayed if
                                   '! the name cannot be resolved (e.g. if the
                                   '! user account was delete, belongs to a
                                   '! different domain, etc.).
+Private showOnlySID               '! Display the SID of a trustee instead of
+                                  '! its name.
 Private showInheritedPermissions  '! Display inherited permissions in the
                                   '! output. Otherwise only non-inherited
                                   '! permissions will be displayed. Global
@@ -205,6 +207,7 @@ Sub Main(args)
 	If args.Named.Exists("?") Then PrintUsage
 	showOwner = args.Named.Exists("o")
 	showSID = args.Named.Exists("s")
+	showOnlySID = args.Named.Exists("so")
 	showInheritedPermissions = args.Named.Exists("i")
 	showExtendedPermissions = args.Named.Exists("e")
 	showFiles = args.Named.Exists("f")
@@ -550,17 +553,21 @@ End Function
 '!
 '! @see <http://msdn.microsoft.com/en-us/library/aa394501.aspx>
 Private Function FormatTrustee(ByVal trustee)
+	Dim displaySID
+
 	If IsNull(trustee) Then
 		FormatTrustee = ""
-	ElseIf showSID Or IsNull(trustee.Name) Then
+	ElseIf showOnlySID Or IsNull(trustee.Name) Then
 		FormatTrustee = trustee.SIDString
 	Else
+		displaySID = ""
+		If showSID Then displaySID = " [" & trustee.SIDString & "]"
 		If InStr(trustee.Domain, ".") > 0 Then
-			FormatTrustee = trustee.Name & "@" & trustee.Domain
+			FormatTrustee = trustee.Name & "@" & trustee.Domain & displaySID
 		ElseIf IsNull(trustee.Domain) Or trustee.Domain = "" Then
-			FormatTrustee = trustee.Name
+			FormatTrustee = trustee.Name & displaySID
 		Else
-			FormatTrustee = trustee.Domain & "\" & trustee.Name
+			FormatTrustee = trustee.Domain & "\" & trustee.Name & displaySID
 		End If
 	End If
 End Function
@@ -689,7 +696,8 @@ Private Sub PrintUsage
 		& vbTab & "/i" & vbTab & "Show inherited permissions." & vbNewLine _
 		& vbTab & "/o" & vbTab & "Show owner." & vbNewLine _
 		& vbTab & "/r" & vbTab & "Recurse into subfolders." & vbNewLine _
-		& vbTab & "/s" & vbTab & "Show SIDs instead of names." & vbNewLine & vbNewLine _
+		& vbTab & "/s" & vbTab & "Show SIDs along with names." & vbNewLine _
+		& vbTab & "/so" & vbTab & "Show SIDs only (instead of names)." & vbNewLine & vbNewLine _
 		& vbTab & "PATH is the absolute or relative path to a file or folder."
 	WScript.Quit 0
 End Sub
