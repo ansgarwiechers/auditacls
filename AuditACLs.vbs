@@ -160,13 +160,11 @@ Private rcDescription : Set rcDescription = CreateObject("Scripting.Dictionary")
 ' global script configuration flags
 Private showOwner                 '! Display the owner of each object in the
                                   '! output. Global configuration flag.
-Private showSID                   '! Display the SID of a trustee along with
-                                  '! its name. SIDs are always displayed if
-                                  '! the name cannot be resolved (e.g. if the
-                                  '! user account was delete, belongs to a
-                                  '! different domain, etc.).
-Private showOnlySID               '! Display the SID of a trustee instead of
-                                  '! its name.
+Private showSID                   '! Display the SID of a trustee.
+Private showName                  '! Display the name of a trustee. If a name
+                                  '! cannot be resolved (e.g. the account was
+                                  '! deleted, belongs to a different domain,
+                                  '! etc.) the SID is displayed instead.
 Private showInheritedPermissions  '! Display inherited permissions in the
                                   '! output. Otherwise only non-inherited
                                   '! permissions will be displayed. Global
@@ -207,7 +205,11 @@ Sub Main(args)
 	If args.Named.Exists("?") Then PrintUsage
 	showOwner = args.Named.Exists("o")
 	showSID = args.Named.Exists("s")
-	showOnlySID = args.Named.Exists("so")
+	If showSID Then
+		showName = args.Named.Exists("n")
+	Else
+		showName = True
+	End If
 	showInheritedPermissions = args.Named.Exists("i")
 	showExtendedPermissions = args.Named.Exists("e")
 	showFiles = args.Named.Exists("f")
@@ -557,7 +559,7 @@ Private Function FormatTrustee(ByVal trustee)
 
 	If IsNull(trustee) Then
 		FormatTrustee = ""
-	ElseIf showOnlySID Or IsNull(trustee.Name) Then
+	ElseIf Not showName Or IsNull(trustee.Name) Then
 		FormatTrustee = trustee.SIDString
 	Else
 		displaySID = ""
@@ -694,10 +696,10 @@ Private Sub PrintUsage
 		& vbTab & "/e" & vbTab & "Show extended permissions (default is simple permissions)." & vbNewLine _
 		& vbTab & "/f" & vbTab & "Show security information of files as well (not only folders)." & vbNewLine _
 		& vbTab & "/i" & vbTab & "Show inherited permissions." & vbNewLine _
+		& vbTab & "/n" & vbTab & "Show user/group names (default)." & vbNewLine _
 		& vbTab & "/o" & vbTab & "Show owner." & vbNewLine _
 		& vbTab & "/r" & vbTab & "Recurse into subfolders." & vbNewLine _
-		& vbTab & "/s" & vbTab & "Show SIDs along with names." & vbNewLine _
-		& vbTab & "/so" & vbTab & "Show SIDs only (instead of names)." & vbNewLine & vbNewLine _
+		& vbTab & "/s" & vbTab & "Show SIDs. When used in combination with /n show SIDs alongside names." & vbNewLine & vbNewLine _
 		& vbTab & "PATH is the absolute or relative path to a file or folder."
 	WScript.Quit 0
 End Sub
