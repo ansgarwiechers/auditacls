@@ -29,16 +29,18 @@ See COPYING.txt.
 
 Usage
 -----
-AuditACLs.vbs [/e] [/f] [/i] [/o] [/r] [/s] PATH [PATH ...]
+AuditACLs.vbs [/e] [/f] [/i] [/n] [/o] [/r] [/s] PATH [PATH ...]
 AuditACLs.vbs /?
 
   /?      Print this help and exit.
   /e      Show extended permissions (default is simple permissions).
   /f      Show security information of files as well (not only folders).
   /i      Show inherited permissions.
+  /n      Show user/group names (default).
   /o      Show owner.
   /r      Recurse into subfolders.
-  /s      Show SIDs instead of names.
+  /s      Show SIDs. When used in combination with /n show SIDs
+          alongside names.
 
   PATH is the absolute or relative path to a file or folder.
 
@@ -73,8 +75,9 @@ simple or extended form:
                                                  read/execute files and to
                                                  access/travers folders
                                                  (inherited)
-    +D W   BUILTIN\Guests                     => deny write access for local
-                                                 group Guests (not inherited)
+    +D W   BUILTIN\Guests [S-1-5-32-546]      => deny write access for local
+                                                 group Guests (not inherited),
+												 displaying name and SID
 
 - extended form:
   +? ?????? ?? ?? ??? (OI)(CI)(IO)(NP) Trustee

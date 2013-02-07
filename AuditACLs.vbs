@@ -2,8 +2,8 @@
 '! of files and folders.
 '!
 '! @author  Ansgar Wiechers <ansgar.wiechers@planetcobalt.net>
-'! @date    2012-05-06
-'! @version 1.1.1
+'! @date    2013-02-07
+'! @version 1.1.2
 
 ' This program is free software; you can redistribute it and/or
 ' modify it under the terms of the GNU General Public License
@@ -699,7 +699,8 @@ Private Sub PrintUsage
 		& vbTab & "/n" & vbTab & "Show user/group names (default)." & vbNewLine _
 		& vbTab & "/o" & vbTab & "Show owner." & vbNewLine _
 		& vbTab & "/r" & vbTab & "Recurse into subfolders." & vbNewLine _
-		& vbTab & "/s" & vbTab & "Show SIDs. When used in combination with /n show SIDs alongside names." & vbNewLine & vbNewLine _
+		& vbTab & "/s" & vbTab & "Show SIDs. When used in combination with /n show SIDs" & vbNewLine _
+		& vbTab & vbTab & "alongside names." & vbNewLine & vbNewLine _
 		& vbTab & "PATH is the absolute or relative path to a file or folder."
 	WScript.Quit 0
 End Sub
