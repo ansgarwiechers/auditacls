@@ -18,7 +18,7 @@ impression may have been wrong there.
 Bottom line: I wasn't able to find a tool that would traverse a directory tree
 for me, and show me the permissions of the root folder plus all non-inherited
 permissions below the root folder in a format that I consider readable. Thus,
-after a question over at -visualbasicscript.com- (RIP) got me started, I wrote
+after a question over at <strike>visualbasicscript.com</strike> (RIP) got me started, I wrote
 my own script for auditing ACLs on files and folders.
 
 
@@ -51,7 +51,7 @@ Output Format
 The script prints the ACEs of the ACL of a given file or folder either in
 simple or extended form:
 
-- simple form:
+- Simple form:
 
       +? ??? Trustee
       || |   `------- user, group or security principal the ACE applies to
@@ -70,13 +70,13 @@ simple or extended form:
       |                 I = Audit
       `-------------- indicator for non-inherited ACE
 
-  **Examples:**
+  Examples:
 
   - `+A F   FOO\Domain Admins` &rArr; admins of domain FOO full control (not inherited)
   - ` A RX  NT AUTHORITY\Authenticated Users` &rArr; allow authenticated users to read/execute files and to access/travers folders (inherited)
   - `+D W   BUILTIN\Guests [S-1-5-32-546]` &rArr; deny write access for local group Guests (not inherited), displaying name and SID
 
-- extended form:
+- Extended form:
 
       +? ?????? ?? ?? ??? (OI)(CI)(IO)(NP) Trustee
       || |      |  |  |   |                `-- user, group or security principal the
@@ -115,7 +115,7 @@ simple or extended form:
       |                                          F = Failure (SACL)
       `--------------------------------------- indicator for non-inherited ACE
 
-  **Examples:**
+  Examples:
 
   - ` A rwaxdc rw rw rwo (OI)(CI)         FOO\Domain Admins` &rArr; give admins of domain FOO full control (inherited)
   - `+A -wa--- -- -- ---                  BUILTIN\Users` &rArr; allow local users to create files and subfolders in the current folder (not inherited)
